@@ -227,7 +227,7 @@ export default function App() {
       <nav className="w-64 border-r border-slate-800 bg-slate-900/50 flex flex-col p-4 space-y-6 flex-shrink-0">
         <div className="flex items-center space-x-3 text-emerald-400 mb-4 px-2">
           <Terminal size={28} />
-          <h1 className="text-xl font-bold tracking-wider uppercase">0xWriteups</h1>
+          <h1 className="text-xl font-bold tracking-wider uppercase">PWNLOGS</h1>
         </div>
         
         <div className="space-y-2 flex-grow">
