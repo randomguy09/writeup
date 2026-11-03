@@ -1,4 +1,4 @@
-import { pgTable, serial, text, bigint, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, bigint, index, integer } from "drizzle-orm/pg-core";
 
 export const writeups = pgTable(
   "writeups",
@@ -16,3 +16,17 @@ export const writeups = pgTable(
   },
   (t) => [index("writeups_owner_idx").on(t.ownerId)]
 );
+
+// Key/value settings (e.g. the scrypt hash of the create-password).
+export const appSettings = pgTable("app_settings", {
+  key: text().primaryKey(),
+  value: text().notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+// Failed password attempts per client IP, used for brute-force lockout.
+export const authAttempts = pgTable("auth_attempts", {
+  ip: text().primaryKey(),
+  failures: integer().notNull().default(0),
+  windowStart: bigint("window_start", { mode: "number" }).notNull(),
+});
