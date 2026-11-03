@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import DOMPurify from 'dompurify';
+import { api, getOwnerId } from './api.js';
 import { 
   Terminal, 
   FolderLock, 
@@ -19,12 +18,7 @@ import {
   Edit
 } from 'lucide-react';
 
-// --- Firebase Initialization ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ctf-portfolio-app';
+const sanitize = (html) => DOMPurify.sanitize(html || '');
 
 const CATEGORY_COLORS = {
   pwn: "text-red-400 border-red-400/30 bg-red-400/10",
@@ -64,42 +58,24 @@ export default function App() {
   // View State
   const [viewingWriteup, setViewingWriteup] = useState(null);
 
-  // Auth Effect
+  // Identity + initial data load
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Error:", err);
-        showNotification("Authentication failed.", "error");
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    setUser({ uid: getOwnerId() });
   }, []);
 
-  // Data Fetching Effect
+  const loadWriteups = async () => {
+    try {
+      const data = await api.list();
+      setWriteups(data);
+    } catch (error) {
+      console.error("Load error:", error);
+      showNotification("Failed to load data.", "error");
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
-
-    const writeupsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'writeups');
-    const unsubscribe = onSnapshot(writeupsRef, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort in memory (newest first)
-      data.sort((a, b) => b.createdAt - a.createdAt);
-      setWriteups(data);
-    }, (error) => {
-      console.error("Firestore Error:", error);
-      showNotification("Failed to load data.", "error");
-    });
-
-    return () => unsubscribe();
+    loadWriteups();
   }, [user]);
 
   const showNotification = (msg, type = "success") => {
@@ -118,6 +94,8 @@ export default function App() {
   const handleCreateNew = () => {
     resetEditor();
     setCurrentView('editor');
+    // The editor may not be mounted yet; populate it once it is
+    setTimeout(resetEditor, 50);
   };
 
   const handleEdit = (writeup) => {
@@ -133,7 +111,7 @@ export default function App() {
     // We need to set the innerHTML after a short delay to ensure the ref is mounted
     setTimeout(() => {
       if (editorRef.current) {
-        editorRef.current.innerHTML = writeup.content;
+        editorRef.current.innerHTML = sanitize(writeup.content);
       }
     }, 50);
   };
@@ -151,7 +129,7 @@ export default function App() {
     }
 
     setIsSaving(true);
-    const content = editorRef.current ? editorRef.current.innerHTML : '';
+    const content = sanitize(editorRef.current ? editorRef.current.innerHTML : '');
     
     // Auto-generate a simple summary if none provided by taking first 100 text characters
     let summary = formData.summary;
@@ -162,30 +140,23 @@ export default function App() {
       summary = text.substring(0, 120).replace(/\/\* Begin your write-up here\.\.\. \*\//g, '').trim() + "...";
     }
 
-    const writeupData = {
-      ...formData,
-      summary,
-      content,
-      updatedAt: Date.now()
-    };
+    const writeupData = { ...formData, summary, content };
 
     try {
       if (currentId) {
         // Update existing
-        const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'writeups', currentId);
-        await updateDoc(docRef, writeupData);
+        await api.update(currentId, writeupData);
         showNotification("Case File updated successfully.");
       } else {
         // Create new
-        writeupData.createdAt = Date.now();
-        const writeupsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'writeups');
-        await addDoc(writeupsRef, writeupData);
+        await api.create(writeupData);
         showNotification("New Case File saved successfully.");
       }
+      await loadWriteups();
       setCurrentView('dashboard');
     } catch (err) {
       console.error("Save error:", err);
-      showNotification("Failed to save Case File.", "error");
+      showNotification(err.message || "Failed to save Case File.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -197,7 +168,8 @@ export default function App() {
     // Note: Alert/Confirm is forbidden by rules, implementing a direct delete for simplicity, 
     // in a real app we'd use a custom modal here.
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'writeups', id));
+      await api.remove(id);
+      setWriteups((prev) => prev.filter((w) => w.id !== id));
       showNotification("Case File deleted.");
       if (currentView === 'view' && viewingWriteup?.id === id) {
         setCurrentView('dashboard');
@@ -407,7 +379,7 @@ export default function App() {
 
                 <div 
                   className="prose prose-invert prose-emerald max-w-none font-sans text-slate-300 leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: viewingWriteup.content }}
+                  dangerouslySetInnerHTML={{ __html: sanitize(viewingWriteup.content) }}
                 />
              </div>
           </div>
@@ -543,7 +515,6 @@ export default function App() {
                   }
                 }}
               >
-                {!currentId && <p className="text-slate-500 italic mb-4">/* Begin your write-up here... */</p>}
               </div>
             </div>
 
